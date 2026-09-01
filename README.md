@@ -4,6 +4,12 @@
 
 Forked from [InferSens/node-red-contrib-minio-all](https://github.com/InferSens/node-red-contrib-minio-all). This fork preserves the incoming Node-RED `msg` object through asynchronous MinIO operations.
 
+Original `node-red-contrib-minio-all` breaks `http` image requests so badly that this fork was created to hopefully restore order to this simple task.
+
+---
+
+Original `README.md`: 
+
 NodeRed Node for common MinIO operations, by Colin Payne.
 
 This node utilises the MinIO JavaScript API (please see https://docs.min.io/docs/javascript-client-api-reference.html).
