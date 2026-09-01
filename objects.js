@@ -38,7 +38,7 @@ module.exports = function (RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName': node.bucket,
             'objectName': node.object,
             'offset': node.offset,
@@ -62,25 +62,33 @@ module.exports = function (RED) {
         }
 
         // TRIGGER ON INCOMING MESSAGE
-        node.on('input', function (msg) {
+        node.on('input', function (msg, send, done) {
+            var operation = msg.operation || node.operation;
+            var opParams = Object.assign({}, defaultParams);
             // If values are provided in the incoming message, then they override those set in the node configuration
-            node.operation = (msg.operation) ? msg.operation : node.operation;
-            opParams.bucketName = (msg.bucketName) ? msg.bucketName : opParams.bucketName;
-            opParams.objectName = (msg.objectName) ? msg.objectName : opParams.objectName;
-            opParams.offset = (msg.offset) ? msg.offset : opParams.offset;
-            opParams.length = (msg.length) ? msg.length : opParams.length;
-            opParams.stream = (msg.stream) ? msg.stream : opParams.stream;
-            opParams.size = (msg.size) ? msg.size : opParams.size;
-            opParams.metaData = (msg.metaData) ? msg.metaData : opParams.metaData;
-            opParams.sourceObject = (msg.sourceObject) ? msg.sourceObject : opParams.sourceObject;
-            opParams.conditions = (msg.conditions) ? msg.conditions : opParams.conditions;
-            opParams.objectsList = (msg.objectsList) ? msg.objectsList : opParams.objectsList;
-            opParams.prefix = (msg.prefix) ? msg.prefix : opParams.prefix;
-            opParams.etag = (msg.etag) ? msg.etag : opParams.etag;
-            opParams.dateTime = (msg.dateTime) ? msg.dateTime : opParams.dateTime;
+            opParams.bucketName = msg.bucketName || opParams.bucketName;
+            opParams.objectName = msg.objectName || opParams.objectName;
+            opParams.offset = msg.offset || opParams.offset;
+            opParams.length = msg.length || opParams.length;
+            opParams.stream = msg.stream || opParams.stream;
+            opParams.size = msg.size || opParams.size;
+            opParams.metaData = msg.metaData || opParams.metaData;
+            opParams.sourceObject = msg.sourceObject || opParams.sourceObject;
+            opParams.conditions = msg.conditions || opParams.conditions;
+            opParams.objectsList = msg.objectsList || opParams.objectsList;
+            opParams.prefix = msg.prefix || opParams.prefix;
+            opParams.etag = msg.etag || opParams.etag;
+            opParams.dateTime = msg.dateTime || opParams.dateTime;
+
+            var completed = false;
+            function finish(output, error) {
+                if (completed) { return; }
+                completed = true;
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
 
             // Trigger Bucket Operation type based on "operation" selected in node configuration
-            switch (node.operation) {
+            switch (operation) {
 
                 // ====  GET OBJECT  ===================================================
                 case "getObject":
@@ -91,10 +99,8 @@ module.exports = function (RED) {
                         try {
                             if (err) {
                                 helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                                node.error = err;
-                                node.output = {
-                                    'getObject': false,
-                                };
+                                finish({ 'getObject': false }, err);
+                                return;
                             }
                             dataStream.on('data', function (chunk) {
                                 size += chunk.length;
@@ -102,18 +108,18 @@ module.exports = function (RED) {
                             });
                             dataStream.on('end', function () {
                                 var objectData = Buffer.concat(fileData);
-                                node.error = null;
-                                node.output = {
+                                finish({
                                     'getObject': true,
                                     'objectData': objectData,
                                     'opjectSize': size
-                                };
+                                }, null);
                             });
                             dataStream.on('error', function (err) {
-                                console.log(err);
+                                helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                                finish({ 'getObject': false }, err);
                             });
                         } catch (e) {
-                            node.error = e;
+                            finish({ 'getObject': false }, e);
                         }
                     });
                     break;
@@ -125,10 +131,8 @@ module.exports = function (RED) {
                         helpers.statusUpdate(node, "blue", "dot", 'Attempting getPartialObject...', 5000);
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'getPartialObject': false
-                            };
+                            finish({ 'getPartialObject': false }, err);
+                            return;
                         }
                         var receivedChunk;
                         dataStream.on('data', function (chunk) {
@@ -138,18 +142,14 @@ module.exports = function (RED) {
                         });
                         dataStream.on('end', function () {
                             helpers.statusUpdate(node, "green", "dot", 'Object Chunk Received', 5000);
-                            node.error = null;
-                            node.output = {
+                            finish({
                                 'getPartialObject': true,
                                 'chunk': receivedChunk
-                            };
+                            }, null);
                         });
                         dataStream.on('error', function (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'getPartialObject': false
-                            };
+                            finish({ 'getPartialObject': false }, err);
                         });
                     });
                     break;
@@ -159,16 +159,12 @@ module.exports = function (RED) {
                     minioClient.putObject(opParams.bucketName, opParams.objectName, opParams.stream, function (err, etag) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'putObject': false
-                            };
+                            finish({ 'putObject': false }, err);
                         } else {
-                            node.error = null;
-                            node.output = {
+                            finish({
                                 'putObject': true,
                                 'etag': etag
-                            };
+                            }, null);
                         }
                     });
                     break;
@@ -208,18 +204,14 @@ module.exports = function (RED) {
                     minioClient.copyObject(opParams.bucketName, opParams.objectName, opParams.sourceObject, conds, function (err, data) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'copyObject': false
-                            };
+                            finish({ 'copyObject': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Object Copied', 5000);
-                            node.error = null;
-                            node.output = {
+                            finish({
                                 'copyObject': true,
                                 'etag': data.etag,
                                 'lastModified': data.lastModified
-                            };
+                            }, null);
                         }
                     });
                     break;
@@ -229,16 +221,12 @@ module.exports = function (RED) {
                     minioClient.statObject(opParams.bucketName, opParams.objectName, function (err, stat) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'statObject': false
-                            };
+                            finish({ 'statObject': false }, err);
                         } else {
-                            node.error = null;
-                            node.output = {
+                            finish({
                                 'statObject': true,
                                 'stat': stat
-                            };
+                            }, null);
                         }
                     });
                     break;
@@ -248,15 +236,9 @@ module.exports = function (RED) {
                     minioClient.removeObject(opParams.bucketName, opParams.objectName, function (err) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.error = err;
-                            node.output = {
-                                'removeObject': false
-                            };
+                            finish({ 'removeObject': false }, err);
                         } else {
-                            node.error = null;
-                            node.output = {
-                                'removeObject': true
-                            };
+                            finish({ 'removeObject': true }, null);
                         }
                     });
                     break;
@@ -267,15 +249,9 @@ module.exports = function (RED) {
                         minioClient.removeObjects(opParams.bucketName, JSON.parse(opParams.objectsList), function (err) {
                             if (err) {
                                 helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                                node.error = err;
-                                node.output = {
-                                    'removeObjects': false
-                                };
+                                finish({ 'removeObjects': false }, err);
                             } else {
-                                node.error = null;
-                                node.output = {
-                                    'removeObjects': true
-                                };
+                                finish({ 'removeObjects': true }, null);
                             }
                         });
                     } else {
@@ -288,22 +264,17 @@ module.exports = function (RED) {
                         });
 
                         objectsStream.on('error', function (e) {
-                            console.log(e);
+                            helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                            finish({ 'removeObjects': false }, e);
                         });
 
                         objectsStream.on('end', function () {
                             minioClient.removeObjects(opParams.bucketName, objectsList, function (err) {
                                 if (err) {
                                     helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                                    node.error = err;
-                                    node.output = {
-                                        'removeObjects': false
-                                    };
+                                    finish({ 'removeObjects': false }, err);
                                 } else {
-                                    node.error = null;
-                                    node.output = {
-                                        'removeObjects': true
-                                    };
+                                    finish({ 'removeObjects': true }, null);
                                 }
                             });
                         });
@@ -316,30 +287,16 @@ module.exports = function (RED) {
                     minioClient.removeIncompleteUpload(opParams.bucketName, opParams.objectName, function (err) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            return console.log('Unable to remove incomplete object', err);
+                            return finish({ 'removeIncompleteUpload': false }, err);
                         }
-                        console.log('Incomplete object removed successfully.');
+                        finish({ 'removeIncompleteUpload': true }, null);
                     });
                     break;
 
                     // ====  DEFAULT - INCORRECT SELECTION   ===============================
-                case "default":
-                    node.error = 'Invalid File Object Operation Selection';
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid File Object Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if (!node.output) {
-                    timerId = setTimeout(check, 50);
-                } else {
-                    node.send([{
-                        'payload': node.output
-                    }, {
-                        'payload': node.error
-                    }]);
-                }
-            }, 50);
 
         });
 

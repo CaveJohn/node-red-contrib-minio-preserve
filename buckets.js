@@ -31,7 +31,7 @@ module.exports = function(RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName' : node.bucket,
             'region'     : node.region,
             'prefix'     : node.prefix,
@@ -49,28 +49,34 @@ module.exports = function(RED) {
         node.status({});
 
         // TRIGGER ON INCOMING MESSAGE
-        node.on('input', function(msg) {
+        node.on('input', function(msg, send, done) {
+            var operation = msg.operation || node.operation;
+            var opParams = Object.assign({}, defaultParams);
             // If values are provided in the incoming message, then they override those in the node configuration
-            node.operation      = (msg.operation) ? msg.operation : node.operation;
-            opParams.bucketName = (msg.bucketName) ? msg.bucketName : opParams.bucketName;
-            opParams.region     = (msg.region) ? msg.region : opParams.region;
-            opParams.prefix     = (msg.prefix) ? msg.prefix : opParams.prefix;
+            opParams.bucketName = msg.bucketName || opParams.bucketName;
+            opParams.region     = msg.region || opParams.region;
+            opParams.prefix     = msg.prefix || opParams.prefix;
             opParams.recursive  = (typeof msg.recursive === 'boolean') ? msg.recursive : opParams.recursive;
-            opParams.startAfter = (msg.startAfter) ? msg.startAfter : opParams.startAfter;
+            opParams.startAfter = msg.startAfter || opParams.startAfter;
+
+            var completed = false;
+            function finish(output, error) {
+                if (completed) { return; }
+                completed = true;
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
             
             // Trigger Bucket Operation type based on "operation" selected in node configuration
-            switch (node.operation) {                
+            switch (operation) {
                 // ====  MAKE BUCKET  ===========================================
                 case "makeBucket":
                     helpers.statusUpdate(node, "blue", "dot", 'Making bucket "' + opParams.bucketName + '"');
                     minioClient.makeBucket(opParams.bucketName, opParams.region, function(err) {
                         if (err) {
-                            node.output = { 'makeBucket': false };
-                            node.error = err;
+                            finish({ 'makeBucket': false }, err);
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.output = { 'makeBucket': true };
-                            node.error = null;
+                            finish({ 'makeBucket': true }, null);
                             helpers.statusUpdate(node, "green", "dot", 'Made bucket "' + opParams.bucketName + '"', 3000);
                         }
                     })
@@ -81,12 +87,10 @@ module.exports = function(RED) {
                     helpers.statusUpdate(node, "blue", "dot", 'Listing Buckets');
                     minioClient.listBuckets(function(err, buckets) {
                         if (err) {
-                            node.error = err;
-                            node.output = { 'listBuckets': buckets };
+                            finish({ 'listBuckets': buckets }, err);
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
-                            node.output = { 'listBuckets': buckets };
+                            finish({ 'listBuckets': buckets }, null);
                             helpers.statusUpdate(node, "green", "dot", 'Returned ' + buckets.length + ' buckets', 3000);
                         }
                     })
@@ -97,16 +101,13 @@ module.exports = function(RED) {
                     helpers.statusUpdate(node, "blue", "dot", 'Checking if "' + opParams.bucketName + '" exists');
                     minioClient.bucketExists(opParams.bucketName, function(err, exists) {
                         if (err) {
-                            node.error = err;
-                            node.output = { 'bucketExists': false };
+                            finish({ 'bucketExists': false }, err);
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else if (exists) {
-                            node.error = null;
-                            node.output = { 'bucketExists': true };
+                            finish({ 'bucketExists': true }, null);
                             helpers.statusUpdate(node, "green", "dot", 'Bucket "' + opParams.bucketName + '" exists', 3000);
                         } else {
-                            node.error = null;
-                            node.output = { 'bucketExists': false };
+                            finish({ 'bucketExists': false }, null);
                             helpers.statusUpdate(node, "red", "dot", 'Bucket "' + opParams.bucketName + '" doesn\'t exist', 3000);
                         }
                     })                    
@@ -117,12 +118,10 @@ module.exports = function(RED) {
                     helpers.statusUpdate(node, "blue", "dot", 'Removing "' + opParams.bucketName + '" bucket');
                     minioClient.removeBucket(opParams.bucketName, function(err) {
                         if (err) {
-                            node.error = err;
-                            node.output = { 'removeBucket': false };
+                            finish({ 'removeBucket': false }, err);
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
-                            node.output = { 'removeBucket': true };
+                            finish({ 'removeBucket': true }, null);
                             helpers.statusUpdate(node, "green", "dot", 'Bucket "' + opParams.bucketName + '" removed', 3000);
                         };
                     })
@@ -137,13 +136,12 @@ module.exports = function(RED) {
                         objects.push(obj);
                     });
                     stream.on('error', function(err) {
-                        node.error = err;
                         helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                        finish({ 'listObjects': false }, err);
                     });
                     stream.on('end',   function() { 
                         helpers.statusUpdate(node, "green", "dot", 'Returned ' + objects.length + ' objects', 3000);
-                        node.output = { 'listObjects': objects };
-                        node.error = null;
+                        finish({ 'listObjects': objects }, null);
                     });
                     break;
 
@@ -156,13 +154,12 @@ module.exports = function(RED) {
                         objects.push(obj);
                     });
                     stream.on('error', function(err) {
-                        node.error = err;
                         helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                        finish({ 'listObjectsV2': false }, err);
                     });
                     stream.on('end',   function() { 
                         helpers.statusUpdate(node, "green", "dot", 'Returned ' + objects.length + ' objects', 3000);
-                        node.output = { 'listObjectsV2': objects };
-                        node.error = null;
+                        finish({ 'listObjectsV2': objects }, null);
                     });
                     break;
 
@@ -175,13 +172,12 @@ module.exports = function(RED) {
                         objects.push(obj);
                     });
                     stream.on('error', function(err) {
-                        node.error = err;
                         helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                        finish({ 'listObjectsV2WithMetadata': false }, err);
                     });
                     stream.on('end',   function() { 
                         helpers.statusUpdate(node, "green", "dot", 'Returned ' + objects.length + ' objects', 3000);
-                        node.output = { 'listObjectsV2WithMetadata': objects };
-                        node.error = null;
+                        finish({ 'listObjectsV2WithMetadata': objects }, null);
                     });
                     break;
 
@@ -194,28 +190,19 @@ module.exports = function(RED) {
                         objects.push(obj);
                     });
                     stream.on('error', function(err) {
-                        node.error = err;
                         helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
+                        finish({ 'listIncompleteUploads': false }, err);
                     });
                     stream.on('end',   function() { 
                         helpers.statusUpdate(node, "green", "dot", 'Returned ' + objects.length + ' objects', 3000);
-                        node.output = { 'listIncompleteUploads': objects };
-                        node.error = null;
+                        finish({ 'listIncompleteUploads': objects }, null);
                     });
                     break;
 
                 // ====  DEFAULT - INCORRECT SELECTION   ===========================================
-                case "default":
-                    node.error = 'Invalid Bucket Operation Selection'
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid Bucket Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if (!node.output) { timerId = setTimeout(check, 50); } else {
-                    node.send([ { 'payload': node.output } , { 'payload': node.error } ]);
-                }
-            }, 50);
 
         });
         

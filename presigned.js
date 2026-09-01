@@ -38,7 +38,7 @@ module.exports = function(RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName'  : node.bucket,
             'objectName'  : node.object,
             'expiry'      : parseInt(node.expiry),
@@ -67,15 +67,16 @@ module.exports = function(RED) {
  
         // TRIGGER ON INCOMING MESSAGE
 
-        node.on('input', function(msg) {
+        node.on('input', function(msg, send, done) {
+            var operation = msg.operation || node.operation;
+            var opParams = JSON.parse(JSON.stringify(defaultParams));
             // If values are provided in the incoming message, then they override those in the node configuration
-            node.operation       = (msg.operation)   ? msg.operation     : node.operation;
-            opParams.bucketName  = (msg.bucketName)  ? msg.bucketName    : opParams.bucketName;
-            opParams.objectName  = (msg.objectName)  ? msg.objectName    : opParams.objectName;
-            opParams.expiry      = (msg.expiry)      ? msg.expiry        : opParams.expiry;
-            opParams.reqParams   = (msg.reqParams)   ? msg.reqParams     : opParams.reqParams;
-            opParams.respHeaders = (msg.respHeaders) ? msg.respHeaders   : opParams.respHeaders;
-            opParams.requestDate = (msg.requestDate) ? msg.requestDate   : opParams.requestDate;
+            opParams.bucketName  = msg.bucketName || opParams.bucketName;
+            opParams.objectName  = msg.objectName || opParams.objectName;
+            opParams.expiry      = msg.expiry || opParams.expiry;
+            opParams.reqParams   = msg.reqParams || opParams.reqParams;
+            opParams.respHeaders = msg.respHeaders || opParams.respHeaders;
+            opParams.requestDate = msg.requestDate || opParams.requestDate;
             // ...and for Presigned POST Policy Operations:
             if (msg.policy) { // If msg.policy has any values provided in the incoming message, then use them.
                 opParams.policy.setBucket                      = (msg.policy.setBucket)                  ? msg.policy.setBucket                  : opParams.policy.setBucket;
@@ -88,26 +89,24 @@ module.exports = function(RED) {
                     opParams.policy.setContentLengthRange.to   = (msg.policy.setContentLengthRange.to)   ? msg.policy.setContentLengthRange.to   : opParams.policy.setContentLengthRange.to;
                 }
             }
-            
-            console.log('node.operation:',node.operation);
+
+            function finish(output, error) {
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
 
             // Trigger Presigned Operation type based on "operation" selected in node configuration
-            switch (node.operation) {
+            switch (operation) {
 
                 // ====  PRESIGNED URL  ===========================================
                 case "presignedURL":
                     helpers.statusUpdate(node, "blue", "dot", 'Fetching presignedURL...');
-                    console.log('presignedUrl opParams:',opParams);
                     minioClient.presignedUrl('GET', opParams.bucketName, opParams.objectName, opParams.expiry, function(err, presignedUrl) {
                         if (err) {
-                            node.error = err;
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
                             helpers.statusUpdate(node, "green", "dot", 'Fetched presignedURL', 5000);
                         }
-                        node.output = { 'presignedURL': presignedUrl };
-                        console.log('presignedUrl:',presignedUrl,'\nError:',err);
+                        finish({ 'presignedURL': presignedUrl }, err);
                     })
                     break;
 
@@ -116,13 +115,11 @@ module.exports = function(RED) {
                     helpers.statusUpdate(node, "blue", "dot", 'Fetching presignedGetObject URL...');
                     minioClient.presignedGetObject(opParams.bucketName, opParams.objectName, opParams.expiry, function(err, presignedUrl) {
                         if (err) {
-                            node.error = err;
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
                             helpers.statusUpdate(node, "green", "dot", 'Fetched presignedGetObject URL', 5000);
                         }
-                        node.output = { 'presignedGetObject': presignedUrl };
+                        finish({ 'presignedGetObject': presignedUrl }, err);
                     })
                     break;
 
@@ -131,13 +128,11 @@ module.exports = function(RED) {
                     helpers.statusUpdate(node, "blue", "dot", 'Fetching presignedPutObject URL...');
                     minioClient.presignedPutObject(opParams.bucketName, opParams.objectName, opParams.expiry, function(err, presignedUrl) {
                         if (err) {
-                            node.error = err;
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
                             helpers.statusUpdate(node, "green", "dot", 'Fetched presignedPutObject URL', 5000);
                         }
-                        node.output = { 'presignedPutObject': presignedUrl };
+                        finish({ 'presignedPutObject': presignedUrl }, err);
                     })                    
                     break;
 
@@ -181,34 +176,22 @@ module.exports = function(RED) {
                         policy.setContentLengthRange( opParams.policy.setContentLengthRange.from, opParams.policy.setContentLengthRange.to );
                     }
 
-                    console.log('POLICY:',policy);
-
                     // ==== SUBMIT THE POLICY OBJECT:
                     helpers.statusUpdate(node, "blue", "dot", 'Submitting presignedPostPolicy object...');
                     minioClient.presignedPostPolicy(policy, function(err, data) {
                         if (err) {
-                            node.error = err;
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.error = null;
                             helpers.statusUpdate(node, "green", "dot", 'Submitted presignedPostPolicy', 5000);
                         }
-                        node.output = { 'presignedPostPolicy': data };
+                        finish({ 'presignedPostPolicy': data }, err);
                     });
 
                     break;
                 // ====  DEFAULT - INCORRECT SELECTION   ===========================================
-                case "default":
-                    node.error = 'Invalid Presigned Operation Selection';
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid Presigned Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if ( !node.output ) { timerId = setTimeout(check, 50); } else {
-                    node.send([ { 'payload': node.output } , { 'payload': node.error } ]);
-                }
-            }, 50);
         });
     }
     RED.nodes.registerType("presigned",Presigned);

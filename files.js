@@ -29,7 +29,7 @@ module.exports = function(RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName' : node.bucket,
             'objectName' : node.object,
             'filePath'   : node.file_path,
@@ -44,28 +44,33 @@ module.exports = function(RED) {
         }
  
         // TRIGGER ON INCOMING MESSAGE
-        node.on('input', function(msg) {
+        node.on('input', function(msg, send, done) {
+            // Keep all request state local. Node instances process more than one
+            // message concurrently, so node-level output/parameter state races.
+            var operation = msg.operation || node.operation;
+            var opParams = Object.assign({}, defaultParams);
             // If values are provided in the incoming message, then they override those set in the node configuration
-            node.operation = (msg.operation) ? msg.operation : node.operation;
-            opParams.bucketName = (msg.bucketName) ? msg.bucketName : opParams.bucketName;
-            opParams.objectName = (msg.objectName) ? msg.objectName : opParams.objectName;
-            opParams.filePath = (msg.filePath) ? msg.filePath : opParams.filePath;
-            opParams.metaData = (msg.metaData) ? msg.metaData : opParams.metaData;
+            opParams.bucketName = msg.bucketName || opParams.bucketName;
+            opParams.objectName = msg.objectName || opParams.objectName;
+            opParams.filePath = msg.filePath || opParams.filePath;
+            opParams.metaData = msg.metaData || opParams.metaData;
+
+            function finish(output, error) {
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
             
             // Trigger Bucket Operation type based on "operation" selected in node configuration
-            switch (node.operation) {                
+            switch (operation) {
                 
                 // ====  FILE GET OBJECT  ===========================================
                 case "fGetObject":
                     helpers.statusUpdate(node, "blue", "dot", 'Getting object "' + opParams.objectName + '"');
                     minioClient.fGetObject(opParams.bucketName, opParams.objectName, opParams.filePath, function(err) {
                         if (err) {
-                            node.output = { 'fGetObject': false };
-                            node.error = err;
+                            finish({ 'fGetObject': false }, err);
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                         } else {
-                            node.output = { 'fGetObject': true };
-                            node.error = null;
+                            finish({ 'fGetObject': true }, null);
                             helpers.statusUpdate(node, "green", "dot", 'Get object "' + opParams.objectName + '" successful', 3000);
                         }
                     })
@@ -77,12 +82,10 @@ module.exports = function(RED) {
                         helpers.statusUpdate(node, "blue", "dot", 'Putting object "' + opParams.objectName + '"');
                         minioClient.fPutObject(opParams.bucketName, opParams.objectName, opParams.filePath, opParams.metaData, function(err, etag) {
                             if (err) {
-                                node.output = { 'fPutObject': false };
-                                node.error = err;
+                                finish({ 'fPutObject': false }, err);
                                 helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                             } else {
-                                node.output = { 'fPutObject': true, 'etag': etag };
-                                node.error = null;
+                                finish({ 'fPutObject': true, 'etag': etag }, null);
                                 helpers.statusUpdate(node, "green", "dot", 'Put object "' + opParams.objectName + '" successful', 3000);
                             }
                         })
@@ -90,12 +93,10 @@ module.exports = function(RED) {
                         helpers.statusUpdate(node, "blue", "dot", 'Putting object "' + opParams.objectName + '"');
                         minioClient.fPutObject(opParams.bucketName, opParams.objectName, opParams.filePath, function(err, etag) {
                             if (err) {
-                                node.output = { 'fPutObject': false };
-                                node.error = err;
+                                finish({ 'fPutObject': false }, err);
                                 helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
                             } else {
-                                node.output = { 'fPutObject': true, 'etag': etag };
-                                node.error = null;
+                                finish({ 'fPutObject': true, 'etag': etag }, null);
                                 helpers.statusUpdate(node, "green", "dot", 'Put object "' + opParams.objectName + '" successful', 3000);
                             }
                         })
@@ -103,17 +104,9 @@ module.exports = function(RED) {
                     break;
 
                 // ====  DEFAULT - INCORRECT SELECTION   ===========================================
-                case "default":
-                    node.error = 'Invalid File Object Operation Selection'
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid File Object Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if (!node.output) { timerId = setTimeout(check, 50); } else {
-                    node.send([ { 'payload': node.output } , { 'payload': node.error } ]);
-                }
-            }, 50);
 
         });
         

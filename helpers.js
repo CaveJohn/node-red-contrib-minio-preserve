@@ -27,6 +27,27 @@ exports.statusUpdate = function(node, fill, shape, text, linger=0) {
     }
 };
 
+// ====  SEND AN OPERATION RESULT WITHOUT REPLACING THE INCOMING MESSAGE  =====
+// Each invocation owns its incoming message. Keeping the result and error on
+// that message (rather than on the node instance) is essential when requests
+// complete out of order.
+exports.sendResult = function(node, msg, result, error, send, done) {
+    msg.payload = result;
+
+    if (error) {
+        // The error output gets its own envelope, while retaining fields such
+        // as _id, req and res from the originating Node-RED message.
+        var errorMsg = Object.assign({}, msg, { payload: error });
+        (send || node.send).call(node, [msg, errorMsg]);
+    } else {
+        (send || node.send).call(node, [msg, null]);
+    }
+
+    if (done) {
+        done();
+    }
+};
+
 
 // ====  FUNCTION TO TOGGLE THE DISPLAY OF AN ARRAY OF ELEMENTS  ===============
 // ====  NOT CURRENTLY USED/WORKING

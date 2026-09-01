@@ -27,7 +27,7 @@ module.exports = function(RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName'   : node.bucket,
             'bucketPolicy' : node.policy,
         }
@@ -40,14 +40,19 @@ module.exports = function(RED) {
         }
  
         // TRIGGER ON INCOMING MESSAGE
-        node.on('input', function(msg) {
+        node.on('input', function(msg, send, done) {
+            var operation = msg.operation || node.operation;
+            var opParams = Object.assign({}, defaultParams);
             // If values are provided in the incoming message, then they override those set in the node configuration
-            node.operation        = (msg.operation) ? msg.operation : node.operation;
-            opParams.bucketName   = (msg.bucketName) ? msg.bucketName : opParams.bucketName;
-            opParams.bucketPolicy = (msg.bucketPolicy) ? msg.bucketPolicy : opParams.bucketPolicy;
+            opParams.bucketName   = msg.bucketName || opParams.bucketName;
+            opParams.bucketPolicy = msg.bucketPolicy || opParams.bucketPolicy;
+
+            function finish(output, error) {
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
             
             // Trigger Bucket Operation type based on "operation" selected in node configuration
-            switch (node.operation) {                
+            switch (operation) {
                 
                 // ====  GET BUCKET POLICY  ===================================================
                 case "getBucketPolicy":
@@ -55,15 +60,13 @@ module.exports = function(RED) {
                     minioClient.getBucketPolicy(opParams.bucketName, function(err, policy) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.output = { 'getBucketPolicy': false };
-                            node.error = err;
+                            finish({ 'getBucketPolicy': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Returned Bucket Policy', 5000);
-                            node.output = {
+                            finish({
                                 'getBucketPolicy': true,
                                 'policy': policy
-                            };
-                            node.error = null;
+                            }, null);
                         }
                     })
                     
@@ -75,29 +78,19 @@ module.exports = function(RED) {
                     minioClient.setBucketPolicy(opParams.bucketName, JSON.stringify(opParams.bucketPolicy), function(err) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.output = { 'setBucketPolicy': false };
-                            node.error = err;
+                            finish({ 'setBucketPolicy': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Set Bucket Policy', 5000);
-                            node.output = { 'setBucketPolicy': true };
-                            node.error = null;
+                            finish({ 'setBucketPolicy': true }, null);
                         }
                     })
 
                     break;
 
                 // ====  DEFAULT - INCORRECT SELECTION   ===============================
-                case "default":
-                    node.error = 'Invalid File Object Operation Selection'
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid File Object Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if (!node.output) { timerId = setTimeout(check, 50); } else {
-                    node.send([ { 'payload': node.output } , { 'payload': node.error } ]);
-                }
-            }, 50);
 
         });
         

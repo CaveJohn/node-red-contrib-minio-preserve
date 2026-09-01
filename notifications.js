@@ -39,7 +39,7 @@ module.exports = function(RED) {
 
         var node = this;
 
-        var opParams = {
+        var defaultParams = {
             'bucketName'               : node.bucket,
             'bucketNotificationConfig' : node.notificationconfig,
             'prefix'                   : node.prefix,
@@ -68,13 +68,14 @@ module.exports = function(RED) {
         }
  
         // TRIGGER ON INCOMING MESSAGE
-        node.on('input', function(msg) {
+        node.on('input', function(msg, send, done) {
+            var operation = msg.operation || node.operation;
+            var opParams = JSON.parse(JSON.stringify(defaultParams));
             // If values are provided in the incoming message, then they override those set in the node configuration
-            node.operation                    = (msg.operation) ? msg.operation : node.operation;
-            opParams.bucketName               = (msg.bucketName) ? msg.bucketName : opParams.bucketName;
-            opParams.bucketNotificationConfig = (msg.bucketNotificationConfig) ? msg.bucketNotificationConfig : opParams.bucketNotificationConfig;
-            opParams.prefix                   = (msg.prefix) ? msg.prefix : opParams.prefix;
-            opParams.suffix                   = (msg.suffix) ? msg.suffix : opParams.suffix;
+            opParams.bucketName               = msg.bucketName || opParams.bucketName;
+            opParams.bucketNotificationConfig = msg.bucketNotificationConfig || opParams.bucketNotificationConfig;
+            opParams.prefix                   = msg.prefix || opParams.prefix;
+            opParams.suffix                   = msg.suffix || opParams.suffix;
             // opParams.events                   = (msg.events) ? msg.events : opParams.events;
             if (msg.events) { // If msg.events has any values provided in the incoming message, then use them.
                 if (msg.events.objectCreated) { // If msg.events.objectCreated has any values provided in the incoming message, then use them.
@@ -90,9 +91,13 @@ module.exports = function(RED) {
                 }
                 opParams.events.listenerStop = (msg.events.listenerStop) ? msg.events.listenerStop : false;
             }
+
+            function finish(output, error) {
+                helpers.sendResult(node, msg, output, error, send, done);
+            }
             
             // Trigger Bucket Notification Operation type based on "operation" selected in node configuration
-            switch (node.operation) {                
+            switch (operation) {
                 
                 // ====  GET BUCKET NOTIFICATION  ===================================================
                 case "getBucketNotification":
@@ -100,15 +105,13 @@ module.exports = function(RED) {
                     minioClient.getBucketNotification(opParams.bucketName, function(err, bucketNotificationConfig) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.output = { 'getBucketNotification': false };
-                            node.error = err;
+                            finish({ 'getBucketNotification': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Returned Bucket Notification Config', 5000);
-                            node.output = {
+                            finish({
                                 'getBucketNotification': true,
                                 'config': bucketNotificationConfig
-                            };
-                            node.error = null;
+                            }, null);
                         }
                     })
 
@@ -136,12 +139,10 @@ module.exports = function(RED) {
                     minioClient.setBucketNotification(opParams.bucketName, bucketNotification, function(err) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.output = { 'setBucketNotification': false };
-                            node.error = err;
+                            finish({ 'setBucketNotification': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Bucket Notification Set', 5000);
-                            node.output = { 'setBucketNotification': true };
-                            node.error = null;
+                            finish({ 'setBucketNotification': true }, null);
                         }
                     })
 
@@ -153,12 +154,10 @@ module.exports = function(RED) {
                     minioClient.removeAllBucketNotification(opParams.bucketName, function(err) {
                         if (err) {
                             helpers.statusUpdate(node, "red", "dot", 'Error', 5000);
-                            node.output = { 'removeAllBucketNotification': false };
-                            node.error = err;
+                            finish({ 'removeAllBucketNotification': false }, err);
                         } else {
                             helpers.statusUpdate(node, "green", "dot", 'Removed All Bucket Notifications', 5000);
-                            node.output = { 'removeAllBucketNotification': true };
-                            node.error = null;
+                            finish({ 'removeAllBucketNotification': true }, null);
                         }
                     })
 
@@ -203,23 +202,19 @@ module.exports = function(RED) {
                     listener.on('notification', function(record) {
                         helpers.statusUpdate(node, "green", "dot", record.eventName, 5000);
                         console.log(record.eventName);
-                        node.send([ { 'payload': { 'listenBucketNotification': record } }, null ]);
+                        var eventMsg = Object.assign({}, msg, {
+                            payload: { 'listenBucketNotification': record }
+                        });
+                        node.send([eventMsg, null]);
                         // listener.stop();
                     })
+                    if (done) { done(); }
                     break;
 
                 // ====  DEFAULT - INCORRECT SELECTION   ===============================
-                case "default":
-                    node.error = 'Invalid File Object Operation Selection';
-                    node.output = null;
+                default:
+                    finish(null, 'Invalid File Object Operation Selection');
             }
-
-            // Waits until response received from host before sending to node output(s)
-            var timerId = setTimeout(function check() {
-                if (!node.output) { timerId = setTimeout(check, 50); } else {
-                    node.send([ { 'payload': node.output } , { 'payload': node.error } ]);
-                }
-            }, 50);
 
         });
         
