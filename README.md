@@ -5,7 +5,17 @@ Forked from [InferSens/node-red-contrib-minio-all](https://github.com/InferSens/
 
 Original `node-red-contrib-minio-all` breaks `http` image requests so badly that this fork was created to hopefully restore order to this simple task.
 
+
+
+
+
+
 ---
+
+
+
+
+
 
 Original `README.md`: 
 
