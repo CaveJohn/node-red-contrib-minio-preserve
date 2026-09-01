@@ -1,4 +1,9 @@
-# node-red-contrib-minio-all
+# node-red-contrib-minio-preserve
+
+> node-red-minio-all but it actually works. you're welcome.
+
+Forked from [InferSens/node-red-contrib-minio-all](https://github.com/InferSens/node-red-contrib-minio-all). This fork preserves the incoming Node-RED `msg` object through asynchronous MinIO operations.
+
 NodeRed Node for common MinIO operations, by Colin Payne.
 
 This node utilises the MinIO JavaScript API (please see https://docs.min.io/docs/javascript-client-api-reference.html).
